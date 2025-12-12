@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Factory Planner – 連線高亮版</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #fff;
+      font-family: "Microsoft JhengHei", Arial, sans-serif;
+      overflow: hidden;
+      color: #000;
+    }
+    #app {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    /* 左側機器清單 */
+    #palette-panel {
+      width: 240px;
+      border-right: 1px solid #000;
+      padding: 10px;
+      background: #fff;
+      overflow-y: auto;
+    }
+    #palette-panel h2 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    #palette-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .palette-item {
+      border: 1px solid #000;
+      background: #fff;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      box-sizing: border-box;
+    }
+    .palette-item-name {
+      font-size: 14px;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .palette-item.selected {
+      background: #000;
+      color: #fff;
+    }
+
+    /* 地圖區 */
+    #map-container {
+      flex-grow: 1;
+      background: #fff;
+      position: relative;
+      overflow: auto;
+    }
+
+    #grid {
+      border-collapse: collapse;
+      position: absolute;
+      left: 0;
+      top: 0;
+      table-layout: fixed;
+      /* 這兩行是關鍵：鎖住表格的實際寬高，讓它寧願超出也不要縮 */
+      width: calc(24px * 70);
+      height: calc(24px * 70);
+      min-width: calc(24px * 70);
+      min-height: calc(24px * 70);
+    }
+    #grid td {
+      width: 24px !important;
+      height: 24px !important;
+      min-width: 24px;
+      min-height: 24px;
+      max-width: 24px;
+      max-height: 24px;
+      padding: 0;
+      border: 1px solid #000;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 16px;         /* 顯示輸送帶符號 */
+      line-height: 24px;       /* 垂直置中 */
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      overflow: hidden;
+      color: #000;
+    }
+
+    /* 成功連線的管線：變色 + 粗一點 */
+    #grid td.belt-ok {
+      color: #0074d9;          /* 藍色線條 */
+      font-weight: bold;
+    }
+
+    /* 機器層：跟 grid 同一個座標系統 */
+    #machine-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+    }
+    .machine {
+      position: absolute;
+      border: 1px solid #000;
+      background: #fff;
+      pointer-events: auto;
+      border-style: dashed;     /* 預設未接線 */
+      cursor: move;             /* 提示可以拖曳 */
+    }
+    .machine.connected {
+      border-width: 2px;
+      border-style: solid;
+    }
+    /* 這台機器至少有一個 I/O 接在「出口→入口」完整網路上 */
+    .machine.network-ok {
+      box-shadow: inset 0 0 0 2px #000;
+    }
+    .machine-inner {
+      width: 100%;
+      height: 100%;
+      display: grid;
+    }
+    .name-cell {
+      grid-column: 1 / -1;
+      grid-row: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      text-align: center;
+      padding: 2px;
+    }
+    .arrow-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    /* 上方工具列 */
+    #toolbar {
+      position: absolute;
+      left: 260px;
+      top: 10px;
+      display: flex;
+      gap: 8px;
+      z-index: 1000;
+    }
+    #toolbar button {
+      border: 1px solid #000;
+      background: #fff;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #toolbar button:hover {
+      background: #eee;
+    }
+    #mode-label {
+      font-size: 13px;
+      padding-top: 4px;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="palette-panel">
+    <h2>機器清單</h2>
+    <div id="palette-list"></div>
+  </div>
+
+  <div id="map-container">
+    <table id="grid"></table>
+    <div id="machine-layer"></div>
+  </div>
+
+  <div id="toolbar">
+    <button id="btn-clear">清空地圖</button>
+    <span id="mode-label">模式：輸送帶</span>
+  </div>
+</div>
+
+<script>
+  const GRID_W = 70;
+  const GRID_H = 70;
+  const CELL_SIZE = 24;
+
+  // 0 = 無，其餘依序循環
+  const BELT_SYMBOLS = [
+    "",   // 0
+    "═",  // 1
+    "║",  // 2
+    "╔",  // 3
+    "╗",  // 4
+    "╝",  // 5
+    "╚",  // 6
+    "╦",  // 7
+    "╩",  // 8
+    "╠",  // 9
+    "╣",  // 10
+    "╪",  // 11 不匯流交叉（目前視為十字）
+    "╬"   // 12 匯流交叉
+  ];
+
+  // 每個符號四方向開口：U/D/L/R
+  function getBeltDirs(type) {
+    const d = { U:false, D:false, L:false, R:false };
+    switch (type) {
+      case 1: // ═
+        d.L = d.R = true;
+        break;
+      case 2: // ║
+        d.U = d.D = true;
+        break;
+      case 3: // ╔ 左上角：右+下
+        d.R = d.D = true;
+        break;
+      case 4: // ╗ 右上角：左+下
+        d.L = d.D = true;
+        break;
+      case 5: // ╝ 右下角：左+上
+        d.L = d.U = true;
+        break;
+      case 6: // ╚ 左下角：右+上
+        d.R = d.U = true;
+        break;
+      case 7: // ╦ 上封口：左右+下
+        d.L = d.R = d.D = true;
+        break;
+      case 8: // ╩ 下封口：左右+上
+        d.L = d.R = d.U = true;
+        break;
+      case 9: // ╠ 左封口：上+下+右
+        d.U = d.D = d.R = true;
+        break;
+      case 10: // ╣ 右封口：上+下+左
+        d.U = d.D = d.L = true;
+        break;
+      case 11: // ╪ 不匯流交叉（先當十字）
+      case 12: // ╬ 匯流交叉
+        d.U = d.D = d.L = d.R = true;
+        break;
+      default:
+        break;
+    }
+    return d;
+  }
+
+  // 判定兩格是否為真正相連的管線（相鄰 + 開口對接）
+  function cellsConnected(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
+
+    const c1 = grid[y1][x1];
+    const c2 = grid[y2][x2];
+    if (!c1 || !c2) return false;
+    if (c1.beltType === 0 || c2.beltType === 0) return false;
+
+    const d1 = getBeltDirs(c1.beltType);
+    const d2 = getBeltDirs(c2.beltType);
+
+    if (dx === 1)  return d1.R && d2.L; // 第二格在右
+    if (dx === -1) return d1.L && d2.R; // 左
+    if (dy === 1)  return d1.D && d2.U; // 下
+    if (dy === -1) return d1.U && d2.D; // 上
+    return false;
+  }
+
+  const MACHINE_DEFS = [
+    { id:"refiner",   name:"精煉機",       w:3, h:3 },
+    { id:"crusher",   name:"粉碎機",       w:3, h:3 },
+    { id:"assembler", name:"配件機",       w:3, h:3 },
+    { id:"molder",    name:"塑型機",       w:3, h:3 },
+    { id:"seeder",    name:"採種機",       w:5, h:5 },
+    { id:"grower",    name:"種植機",       w:5, h:5 },
+    { id:"coreA",     name:"裝備原件機",   w:4, h:6 },
+    { id:"can",       name:"罐裝機",       w:4, h:6 },
+    { id:"pack",      name:"封裝機",       w:4, h:6 },
+    { id:"grind",     name:"研磨機",       w:4, h:6 },
+    { id:"protocol",  name:"協議核心",     w:9, h:9 },
+    { id:"port",      name:"協議儲倉口",   w:3, h:3 }
+  ];
+
+  // grid[y][x] = { beltType, machineId, netId }
+  let grid = [];
+  let machines = {};
+  let nextMachineId = 1;
+  let selectedMachineDef = null;
+
+  // 拖曳相關狀態
+  let draggingMachine = null;
+  let draggingDiv = null;
+  let dragStartMouseX = 0;
+  let dragStartMouseY = 0;
+  let dragStartLeft = 0;
+  let dragStartTop = 0;
+  let dragOriginalGX = 0;
+  let dragOriginalGY = 0;
+  let dragMoved = false;
+
+  function setModeLabel() {
+    const label = document.getElementById("mode-label");
+    if (selectedMachineDef) {
+      label.textContent = `模式：放置機器（${selectedMachineDef.name}），再點一次左邊取消`;
+    } else {
+      label.textContent = "模式：輸送帶";
+    }
+  }
+
+  function initGrid() {
+    const table = document.getElementById("grid");
+    table.innerHTML = "";
+    grid = [];
+    for (let y=0; y<GRID_H; y++) {
+      const tr = document.createElement("tr");
+      const row = [];
+      for (let x=0; x<GRID_W; x++) {
+        const td = document.createElement("td");
+        td.dataset.x = x;
+        td.dataset.y = y;
+        td.addEventListener("click", onCellLeftClick);
+        td.addEventListener("contextmenu", onCellRightClick);
+        tr.appendChild(td);
+        row.push({ beltType:0, machineId:null, netId:-1 });
+      }
+      table.appendChild(tr);
+      grid.push(row);
+    }
+  }
+
+  function initPalette() {
+    const list = document.getElementById("palette-list");
+    list.innerHTML = "";
+    MACHINE_DEFS.forEach(def=>{
+      const item = document.createElement("div");
+      item.className = "palette-item";
+
+      // 放大預覽尺寸
+      const baseScale = 16;
+      const minSize   = 72;
+      const wPx = Math.max(def.w * baseScale, minSize);
+      const hPx = Math.max(def.h * baseScale, minSize);
+      item.style.width  = wPx + "px";
+      item.style.height = hPx + "px";
+
+      const name = document.createElement("div");
+      name.className = "palette-item-name";
+      name.textContent = def.name;
+      item.appendChild(name);
+
+      item.addEventListener("click", ()=>{
+        if (selectedMachineDef && selectedMachineDef.id === def.id) {
+          selectedMachineDef = null;
+          document.querySelectorAll(".palette-item").forEach(el=>el.classList.remove("selected"));
+        } else {
+          selectedMachineDef = def;
+          document.querySelectorAll(".palette-item").forEach(el=>{
+            el.classList.toggle("selected", el === item);
+          });
+        }
+        setModeLabel();
+      });
+
+      list.appendChild(item);
+    });
+  }
+
+  function getCellTD(x,y) {
+    const table = document.getElementById("grid");
+    const row = table.rows[y];
+    if (!row) return null;
+    return row.cells[x] || null;
+  }
+
+  // 由地圖內像素反推格子索引
+  function pointToCell(px, py) {
+    const table = document.getElementById("grid");
+    const rows = table.rows;
+    let gy = -1, gx = -1;
+
+    for (let y=0; y<rows.length; y++) {
+      const td0 = rows[y].cells[0];
+      const top = td0.offsetTop;
+      const bottom = top + td0.offsetHeight;
+      if (py >= top && py < bottom) {
+        gy = y;
+        break;
+      }
+    }
+    if (gy === -1) return null;
+
+    const row = rows[gy];
+    for (let x=0; x<row.cells.length; x++) {
+      const td = row.cells[x];
+      const left = td.offsetLeft;
+      const right = left + td.offsetWidth;
+      if (px >= left && px < right) {
+        gx = x;
+        break;
+      }
+    }
+    if (gx === -1) return null;
+    return { gx, gy };
+  }
+
+  function onCellLeftClick(e) {
+    const td = e.target;
+    const x = parseInt(td.dataset.x,10);
+    const y = parseInt(td.dataset.y,10);
+    const cell = grid[y][x];
+
+    if (selectedMachineDef) {
+      placeMachine(selectedMachineDef, x, y);
+      return;
+    }
+
+    if (cell.machineId) return; // 機器優先，不鋪管
+
+    // 輸送帶符號循環
+    let t = cell.beltType;
+    t = (t + 1) % BELT_SYMBOLS.length; // 0..12
+    cell.beltType = t;
+    td.textContent = BELT_SYMBOLS[t];
+    td.classList.remove("belt-ok");
+
+    updateAllMachineConnections();
+  }
+
+  function onCellRightClick(e) {
+    e.preventDefault();
+    const td = e.target;
+    const x = parseInt(td.dataset.x,10);
+    const y = parseInt(td.dataset.y,10);
+    const cell = grid[y][x];
+
+    if (cell.machineId) {
+      removeMachine(cell.machineId);
+    } else if (cell.beltType > 0) {
+      cell.beltType = 0;
+      cell.netId = -1;
+      td.textContent = "";
+      td.classList.remove("belt-ok");
+      updateAllMachineConnections();
+    }
+  }
+
+  function canPlaceRect(gx, gy, w, h, ignoreId) {
+    if (gx < 0 || gy < 0 || gx + w > GRID_W || gy + h > GRID_H) return false;
+    for (let yy=gy; yy<gy+h; yy++) {
+      for (let xx=gx; xx<gx+w; xx++) {
+        const c = grid[yy][xx];
+        if (c.machineId && c.machineId !== ignoreId) return false;
+      }
+    }
+    return true;
+  }
+
+  function occupyCells(m) {
+    for (let yy=m.gy; yy<m.gy+m.h; yy++) {
+      for (let xx=m.gx; xx<m.gx+m.w; xx++) {
+        const c = grid[yy][xx];
+        c.machineId = m.id;
+        if (c.beltType > 0) {
+          c.beltType = 0;
+          c.netId = -1;
+          const td = getCellTD(xx, yy);
+          if (td) {
+            td.textContent = "";
+            td.classList.remove("belt-ok");
+          }
+        }
+      }
+    }
+  }
+
+  function clearCells(m) {
+    for (let yy=m.gy; yy<m.gy+m.h; yy++) {
+      for (let xx=m.gx; xx<m.gx+m.w; xx++) {
+        const c = grid[yy][xx];
+        if (c.machineId === m.id) c.machineId = null;
+      }
+    }
+  }
+
+  function placeMachine(def, gx, gy) {
+    const baseW = def.w;
+    const baseH = def.h;
+    const w = baseW;
+    const h = baseH;
+    if (!canPlaceRect(gx, gy, w, h, null)) return;
+
+    const id = "M" + (nextMachineId++);
+    const m = {
+      id,
+      defId: def.id,
+      name: def.name,
+      baseW, baseH,
+      gx, gy,
+      w, h,
+      rot: 0,
+      connected: false,
+      hasAnyConnection: false,
+      connectedPortKeys: {}
+    };
+    machines[id] = m;
+    occupyCells(m);
+    updateMachineConnections(m);
+  }
+
+  function strongArrow(ch) {
+    switch (ch) {
+      case "↑": return "▲";
+      case "↓": return "▼";
+      case "←": return "◀";
+      case "→": return "▶";
+      default: return ch;
+    }
+  }
+
+  function renderMachine(m) {
+    const layer = document.getElementById("machine-layer");
+    let div = document.getElementById(m.id);
+    if (!div) {
+      div = document.createElement("div");
+      div.id = m.id;
+      div.className = "machine";
+      div.addEventListener("click", onMachineClick);
+      div.addEventListener("contextmenu", onMachineRightClick);
+      div.addEventListener("mousedown", onMachineMouseDown); // 拖曳
+      layer.appendChild(div);
+    }
+
+    const topLeft  = getCellTD(m.gx,               m.gy);
+    const topRight = getCellTD(m.gx + m.w - 1,     m.gy);
+    const bottomLeft = getCellTD(m.gx,             m.gy + m.h - 1);
+    if (!topLeft || !topRight || !bottomLeft) return;
+
+    const left   = topLeft.offsetLeft;
+    const top    = topLeft.offsetTop;
+    const width  = (topRight.offsetLeft + topRight.offsetWidth) - topLeft.offsetLeft;
+    const height = (bottomLeft.offsetTop + bottomLeft.offsetHeight) - topLeft.offsetTop;
+
+    div.style.left   = left + "px";
+    div.style.top    = top  + "px";
+    div.style.width  = width  + "px";
+    div.style.height = height + "px";
+
+    div.classList.toggle("connected", !!m.connected);
+    div.classList.toggle("network-ok", !!m.hasAnyConnection);
+
+    div.innerHTML = "";
+    const inner = document.createElement("div");
+    inner.className = "machine-inner";
+    inner.style.gridTemplateColumns = `repeat(${m.w}, 1fr)`;
+    inner.style.gridTemplateRows    = `repeat(${m.h}, 1fr)`;
+    div.appendChild(inner);
+
+    const nameCell = document.createElement("div");
+    nameCell.className = "name-cell";
+    nameCell.textContent = m.name;
+    inner.appendChild(nameCell);
+
+    const io = getIOForMachine(m); // 每個 I/O: {cellX, cellY, arrow, side, kind}
+    for (const p of io) {
+      const d = document.createElement("div");
+      d.className = "arrow-cell";
+
+      const key = p.cellX + "," + p.cellY;
+      const isConnectedPort = m.connectedPortKeys && m.connectedPortKeys[key];
+      const ch = isConnectedPort ? strongArrow(p.arrow) : p.arrow;
+
+      d.textContent = ch;
+      d.style.gridColumn = (p.cellX - m.gx + 1);
+      d.style.gridRow    = (p.cellY - m.gy + 1);
+      inner.appendChild(d);
+    }
+  }
+
+  /* 協議核心 base I/O（未旋轉前） */
+  const PROTOCOL_BASE_IO = [];
+  (function initProtocolBaseIO() {
+    const n = 9;
+    // 上下兩邊：7 個入口 (x = 1..7)
+    for (let x=1; x<=7; x++) {
+      PROTOCOL_BASE_IO.push({ lx:x, ly:0,     type:"in",  side:"top"    });
+      PROTOCOL_BASE_IO.push({ lx:x, ly:n-1,   type:"in",  side:"bottom" });
+    }
+    // 左右兩邊：3 個出口 (y = 1,4,7)
+    const rows = [1,4,7];
+    for (const y of rows) {
+      PROTOCOL_BASE_IO.push({ lx:0,     ly:y, type:"out", side:"left"  });
+      PROTOCOL_BASE_IO.push({ lx:n-1,   ly:y, type:"out", side:"right" });
+    }
+  })();
+
+  function rotateSide(side, steps) {
+    const order = ["top","right","bottom","left"];
+    let idx = order.indexOf(side);
+    if (idx === -1) return side;
+    idx = (idx + steps) % 4;
+    return order[idx];
+  }
+
+  function getProtocolIO(m) {
+    const n = 9;
+    const steps = (m.rot / 90) & 3;
+    const gx = m.gx;
+    const gy = m.gy;
+    const res = [];
+
+    for (const base of PROTOCOL_BASE_IO) {
+      let lx = base.lx;
+      let ly = base.ly;
+
+      // 依旋轉次數旋轉座標
+      for (let i = 0; i < steps; i++) {
+        const nlx = n - 1 - ly;
+        const nly = lx;
+        lx = nlx;
+        ly = nly;
+      }
+
+      const side = rotateSide(base.side, steps);
+      const cellX = gx + lx;
+      const cellY = gy + ly;
+
+      const isIn = (base.type === "in");
+      let arrow = "?";
+      if (side === "top") {
+        arrow = isIn ? "↓" : "↑";
+      } else if (side === "bottom") {
+        arrow = isIn ? "↑" : "↓";
+      } else if (side === "left") {
+        arrow = isIn ? "→" : "←";
+      } else if (side === "right") {
+        arrow = isIn ? "←" : "→";
+      }
+
+      res.push({ cellX, cellY, arrow, side, kind: base.type }); // kind: "in"/"out"
+    }
+    return res;
+  }
+
+  function getIOForMachine(m) {
+    // 協議核心用專屬規則
+    if (m.defId === "protocol") {
+      return getProtocolIO(m);
+    }
+
+    const res = [];
+    const w = m.w;
+    const h = m.h;
+    const gx = m.gx;
+    const gy = m.gy;
+    const step = (m.rot / 90) & 3;
+
+    const baseW = m.baseW;
+    const baseH = m.baseH;
+
+    let inSide, outSide;
+
+    if (baseW === baseH) {
+      // 正方形機器
+      const sides = [
+        { in:"top",    out:"bottom" },
+        { in:"right",  out:"left"   },
+        { in:"bottom", out:"top"    },
+        { in:"left",   out:"right"  }
+      ];
+      const conf = sides[step];
+      inSide  = conf.in;
+      outSide = conf.out;
+    } else {
+      // 長方形機器：入口 / 出口永遠在長邊
+      let baseIn, baseOut;
+      if (baseW > baseH) {
+        baseIn  = "top";    // 水平長邊 → 上下
+        baseOut = "bottom";
+      } else {
+        baseIn  = "left";   // 垂直長邊 → 左右
+        baseOut = "right";
+      }
+      inSide  = rotateSide(baseIn,  step);
+      outSide = rotateSide(baseOut, step);
+    }
+
+    function addSide(side, type) {
+      const isIn = (type === "in");
+      const count = (side === "top" || side === "bottom") ? w : h;
+
+      for (let i = 0; i < count; i++) {
+        let cellX, cellY, arrow;
+
+        if (side === "top") {
+          cellX = gx + i;
+          cellY = gy;
+          arrow = isIn ? "↓" : "↑";
+        } else if (side === "bottom") {
+          cellX = gx + i;
+          cellY = gy + h - 1;
+          arrow = isIn ? "↑" : "↓";
+        } else if (side === "left") {
+          cellX = gx;
+          cellY = gy + i;
+          arrow = isIn ? "→" : "←";
+        } else { // right
+          cellX = gx + w - 1;
+          cellY = gy + i;
+          arrow = isIn ? "←" : "→";
+        }
+
+        res.push({ cellX, cellY, arrow, side, kind: type }); // kind: "in"/"out"
+      }
+    }
+
+    addSide(inSide,  "in");
+    addSide(outSide, "out");
+    return res;
+  }
+
+  // BFS 將管線分群：給每一格 netId
+  function rebuildNetworks() {
+    let nextNetId = 0;
+
+    // 清空 netId
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        grid[y][x].netId = -1;
+      }
+    }
+
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const cell = grid[y][x];
+        if (cell.beltType === 0 || cell.netId !== -1) continue;
+
+        const netId = nextNetId++;
+        const queue = [{ x, y }];
+        cell.netId = netId;
+
+        while (queue.length) {
+          const { x:cx, y:cy } = queue.shift();
+          const neighbors = [
+            { nx: cx+1, ny: cy },
+            { nx: cx-1, ny: cy },
+            { nx: cx,   ny: cy+1 },
+            { nx: cx,   ny: cy-1 }
+          ];
+          for (const {nx, ny} of neighbors) {
+            if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
+            const ncell = grid[ny][nx];
+            if (ncell.beltType === 0 || ncell.netId !== -1) continue;
+            if (!cellsConnected(cx, cy, nx, ny)) continue;
+
+            ncell.netId = netId;
+            queue.push({ x:nx, y:ny });
+          }
+        }
+      }
+    }
+
+    return nextNetId;
+  }
+
+  // 重新計算：
+  // 1) 哪些管線是「出口↔入口」完整網路
+  // 2) 哪些 I/O 在這種網路上 → 實心箭頭
+  // 3) 哪些機器有貼到任何管 → 外框實線
+  // 4) 哪些機器至少有一個口接在完整網路 → 內框
+  // 5) 哪些格子的管是完整網路的一部分 → belt-ok（藍色）
+  function recomputeConnectivity() {
+    rebuildNetworks();
+
+    // 重置機器狀態
+    for (const id in machines) {
+      const m = machines[id];
+      m.connected = false;
+      m.hasAnyConnection = false;
+      m.connectedPortKeys = {};
+    }
+
+    // netId -> { hasIn, hasOut, ports:[{machineId, cellX, cellY, kind}] }
+    const netInfo = {};
+
+    // 掃所有機器 I/O，找出每個口是貼在哪一條 netId
+    for (const id in machines) {
+      const m = machines[id];
+      const io = getIOForMachine(m);
+
+      for (const p of io) {
+        // I/O 外面那一格（你原本用來判定接線的那格）
+        let ax = p.cellX;
+        let ay = p.cellY;
+        if (p.side === "top")    ay = p.cellY - 1;
+        if (p.side === "bottom") ay = p.cellY + 1;
+        if (p.side === "left")   ax = p.cellX - 1;
+        if (p.side === "right")  ax = p.cellX + 1;
+
+        if (ax < 0 || ax >= GRID_W || ay < 0 || ay >= GRID_H) continue;
+        const cell = grid[ay][ax];
+        if (cell.beltType === 0 || cell.netId === -1) continue;
+
+        // 有貼到管 → 機器至少算「接到管」(connected)
+        m.connected = true;
+
+        const netId = cell.netId;
+        if (!netInfo[netId]) {
+          netInfo[netId] = { hasIn:false, hasOut:false, ports:[] };
+        }
+        netInfo[netId].ports.push({
+          machineId: m.id,
+          cellX: p.cellX,
+          cellY: p.cellY,
+          kind: p.kind
+        });
+        if (p.kind === "in") netInfo[netId].hasIn = true;
+        else                 netInfo[netId].hasOut = true;
+      }
+    }
+
+    const goodNetIds = new Set();
+
+    // 找出「同時有輸入與輸出」的 netId
+    for (const nidStr in netInfo) {
+      const nid = Number(nidStr);
+      const info = netInfo[nid];
+      if (info.hasIn && info.hasOut) {
+        goodNetIds.add(nid);
+        // 這些 net 上的所有 I/O → 實心箭頭 + 所在機器標記 hasAnyConnection
+        for (const p of info.ports) {
+          const m = machines[p.machineId];
+          if (!m) continue;
+          m.hasAnyConnection = true;
+          const key = p.cellX + "," + p.cellY;
+          m.connectedPortKeys[key] = true;
+        }
+      }
+    }
+
+    // 更新管線顯示（屬於 goodNetIds 的變藍）
+    const table = document.getElementById("grid");
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const cell = grid[y][x];
+        const td = table.rows[y].cells[x];
+        if (cell.beltType > 0 && cell.netId !== -1 && goodNetIds.has(cell.netId)) {
+          td.classList.add("belt-ok");
+        } else {
+          td.classList.remove("belt-ok");
+        }
+      }
+    }
+
+    // 重新 render 所有機器
+    for (const id in machines) {
+      renderMachine(machines[id]);
+    }
+  }
+
+  // 保留原有呼叫點：所有地方改成統一重算
+  function updateMachineConnections(m) {
+    recomputeConnectivity();
+  }
+  function updateAllMachineConnections() {
+    recomputeConnectivity();
+  }
+
+  // 左鍵點機器：旋轉（若不是剛拖曳）
+  function onMachineClick(e) {
+    e.stopPropagation();
+    const div = this;
+    if (div.dataset.justDragged === "1") {
+      delete div.dataset.justDragged;
+      return;
+    }
+
+    const id = this.id;
+    const m = machines[id];
+    if (!m) return;
+
+    const newRot = (m.rot + 90) % 360;
+    let newW, newH;
+    if (newRot % 180 === 0) {
+      newW = m.baseW;
+      newH = m.baseH;
+    } else {
+      newW = m.baseH;
+      newH = m.baseW;
+    }
+
+    if (!canPlaceRect(m.gx, m.gy, newW, newH, m.id)) return;
+
+    clearCells(m);
+    m.rot = newRot;
+    m.w = newW;
+    m.h = newH;
+    occupyCells(m);
+    updateMachineConnections(m);
+  }
+
+  // 右鍵機器：刪除
+  function onMachineRightClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    removeMachine(this.id);
+  }
+
+  function removeMachine(id) {
+    const m = machines[id];
+    if (!m) return;
+    clearCells(m);
+    const div = document.getElementById(id);
+    if (div && div.parentNode) div.parentNode.removeChild(div);
+    delete machines[id];
+    updateAllMachineConnections();
+  }
+
+  // 機器拖曳：mousedown 開始
+  function onMachineMouseDown(e) {
+    if (e.button !== 0) return; // 只處理左鍵拖曳
+    e.stopPropagation();
+
+    const id = this.id;
+    const m = machines[id];
+    if (!m) return;
+
+    const map = document.getElementById("map-container");
+    const rect = map.getBoundingClientRect();
+
+    draggingMachine = m;
+    draggingDiv = this;
+    dragMoved = false;
+
+    dragOriginalGX = m.gx;
+    dragOriginalGY = m.gy;
+
+    dragStartMouseX = e.clientX + map.scrollLeft - rect.left;
+    dragStartMouseY = e.clientY + map.scrollTop  - rect.top;
+
+    dragStartLeft = parseInt(draggingDiv.style.left, 10) || 0;
+    dragStartTop  = parseInt(draggingDiv.style.top,  10) || 0;
+
+    document.addEventListener("mousemove", onDocumentMouseMove);
+    document.addEventListener("mouseup", onDocumentMouseUp);
+  }
+
+  function onDocumentMouseMove(e) {
+    if (!draggingMachine) return;
+
+    const map = document.getElementById("map-container");
+    const rect = map.getBoundingClientRect();
+
+    const xInMap = e.clientX + map.scrollLeft - rect.left;
+    const yInMap = e.clientY + map.scrollTop  - rect.top;
+
+    const dx = xInMap - dragStartMouseX;
+    const dy = yInMap - dragStartMouseY;
+
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      dragMoved = true;
+    }
+
+    draggingDiv.style.left = (dragStartLeft + dx) + "px";
+    draggingDiv.style.top  = (dragStartTop  + dy) + "px";
+  }
+
+  function onDocumentMouseUp(e) {
+    if (!draggingMachine) return;
+
+    document.removeEventListener("mousemove", onDocumentMouseMove);
+    document.removeEventListener("mouseup", onDocumentMouseUp);
+
+    const m = draggingMachine;
+    const div = draggingDiv;
+    draggingMachine = null;
+    draggingDiv = null;
+
+    if (!dragMoved) {
+      return; // 當作 click 交給 onMachineClick 處理
+    }
+
+    div.dataset.justDragged = "1";
+
+    const newLeft = parseInt(div.style.left, 10) || 0;
+    const newTop  = parseInt(div.style.top,  10) || 0;
+
+    const px = newLeft + 1;
+    const py = newTop  + 1;
+    const cell = pointToCell(px, py);
+
+    clearCells(m);
+
+    if (cell && canPlaceRect(cell.gx, cell.gy, m.w, m.h, m.id)) {
+      m.gx = cell.gx;
+      m.gy = cell.gy;
+      occupyCells(m);
+      updateMachineConnections(m);
+    } else {
+      m.gx = dragOriginalGX;
+      m.gy = dragOriginalGY;
+      occupyCells(m);
+      updateMachineConnections(m);
+    }
+  }
+
+  function clearAll() {
+    machines = {};
+    nextMachineId = 1;
+    initGrid();
+    document.getElementById("machine-layer").innerHTML = "";
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    initGrid();
+    initPalette();
+    setModeLabel();
+
+  // 這段是新的：把 grid 的寬高用 JS 再鎖一次
+    const gridEl = document.getElementById("grid");
+    gridEl.style.width  = (GRID_W * CELL_SIZE) + "px";
+    gridEl.style.height = (GRID_H * CELL_SIZE) + "px";
+    gridEl.style.minWidth  = gridEl.style.width;
+    gridEl.style.minHeight = gridEl.style.height;
+
+    document.getElementById("btn-clear").addEventListener("click", clearAll);
+});
+</script>
+</body>
+</html>
