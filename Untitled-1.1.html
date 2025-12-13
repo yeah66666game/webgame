@@ -535,6 +535,26 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
   }
 
   function placeMachine(def, gx, gy) {
+    // ✅ 邊緣端口：點格子放置時自動決定方向並吸附
+if (isEdgePort(def.id)) {
+  // 點在左側外圈就直放；點在底邊外圈就橫放
+  // 其他位置就依靠近哪邊決定（可改成直接 return 拒絕）
+  const distToLeft = gx;
+  const distToBottom = (GRID_H - 1) - gy;
+
+  if (gx === 0 || distToLeft <= distToBottom) {
+    // 左邊直放 1x3
+    gx = 0;
+    gy = Math.max(0, Math.min(gy - 1, GRID_H - 3));
+    def = { ...def, w: 1, h: 3 };
+  } else {
+    // 底邊橫放 3x1
+    gy = GRID_H - 1;
+    gx = Math.max(0, Math.min(gx - 1, GRID_W - 3));
+    def = { ...def, w: 3, h: 1 };
+  }
+}
+
     const baseW = def.w;
     const baseH = def.h;
     const w = baseW;
@@ -1068,19 +1088,88 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
     const py = newTop  + 1;
     const cell = pointToCell(px, py);
 
-    clearCells(m);
+clearCells(m);
 
-    if (cell && canPlaceMachine(m.defId, cell.gx, cell.gy, m.w, m.h, m.id)) {
-      m.gx = cell.gx;
-      m.gy = cell.gy;
+if (!cell) {
+  // 回原位
+  m.gx = dragOriginalGX;
+  m.gy = dragOriginalGY;
+  occupyCells(m);
+  updateMachineConnections(m);
+  return;
+}
+
+// ✅ 邊緣端口：拖曳放下時自動決定要貼左邊 or 貼底邊，並自動改成對應尺寸
+if (isEdgePort(m.defId)) {
+  // 以「離左邊距離」vs「離底邊距離」決定吸附哪邊
+  // cell.gx 越小越靠左；(GRID_H-1 - cell.gy) 越小越靠底
+  const distToLeft = cell.gx;
+  const distToBottom = (GRID_H - 1) - cell.gy;
+
+  // 兩個候選：左邊直放(1x3) / 底邊橫放(3x1)
+  const candidates = [];
+
+  // 左邊：1x3，x=0，y 需要 clamp
+  candidates.push({
+    gx: 0,
+    gy: Math.max(0, Math.min(cell.gy - 1, GRID_H - 3)),
+    rot: 0,
+    w: 1,
+    h: 3,
+    score: distToLeft
+  });
+
+  // 底邊：3x1，y=GRID_H-1，x 需要 clamp
+  candidates.push({
+    gx: Math.max(0, Math.min(cell.gx - 1, GRID_W - 3)),
+    gy: GRID_H - 1,
+    rot: 90,
+    w: 3,
+    h: 1,
+    score: distToBottom
+  });
+
+  // 依照「離哪個邊更近」優先嘗試；若不行再試另一個
+  candidates.sort((a, b) => a.score - b.score);
+
+  let placed = false;
+  for (const c of candidates) {
+    if (canPlaceMachine(m.defId, c.gx, c.gy, c.w, c.h, m.id)) {
+      m.gx = c.gx;
+      m.gy = c.gy;
+      m.rot = c.rot;
+      m.w = c.w;
+      m.h = c.h;
       occupyCells(m);
       updateMachineConnections(m);
-    } else {
-      m.gx = dragOriginalGX;
-      m.gy = dragOriginalGY;
-      occupyCells(m);
-      updateMachineConnections(m);
+      placed = true;
+      break;
     }
+  }
+
+  if (!placed) {
+    // 兩邊都放不下 → 回原位
+    m.gx = dragOriginalGX;
+    m.gy = dragOriginalGY;
+    occupyCells(m);
+    updateMachineConnections(m);
+  }
+  return;
+}
+
+// ✅ 非端口：照原本方式放
+if (canPlaceMachine(m.defId, cell.gx, cell.gy, m.w, m.h, m.id)) {
+  m.gx = cell.gx;
+  m.gy = cell.gy;
+  occupyCells(m);
+  updateMachineConnections(m);
+} else {
+  m.gx = dragOriginalGX;
+  m.gy = dragOriginalGY;
+  occupyCells(m);
+  updateMachineConnections(m);
+}
+
   }
 
   function clearAll() {
@@ -1107,6 +1196,7 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
 </script>
 </body>
 </html>
+
 
 
 
