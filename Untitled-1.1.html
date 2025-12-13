@@ -474,15 +474,17 @@
     }
     return true;
   }
-  function isEdgePort(defId) {
-  return defId === "pickup_port" || defId === "store_port";
+const EDGE_PORT_IDS = new Set(["pickup_port", "store_port"]);
+
+function isEdgePort(defId) {
+  return EDGE_PORT_IDS.has(defId);
 }
 
 // 端口只能放：
 // - 左邊最外圈（x=0）：直放 1x3
 // - 下方最外圈（y=GRID_H-1）：橫放 3x1
 function edgePortAllowed(defId, gx, gy, w, h) {
-  if (!isEdgePort(defId)) return true; // ✅ 非端口完全不限制
+  if (!isEdgePort(defId)) return true;
 
   // 左側外圈（直放）
   if (w === 1 && h === 3) {
@@ -501,6 +503,7 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
   if (!edgePortAllowed(defId, gx, gy, w, h)) return false;
   return canPlaceRect(gx, gy, w, h, ignoreId);
 }
+
 
   
 
@@ -1104,5 +1107,6 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
 </script>
 </body>
 </html>
+
 
 
