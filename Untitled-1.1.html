@@ -535,49 +535,58 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
   }
 
   function placeMachine(def, gx, gy) {
-    // ✅ 邊緣端口：點格子放置時自動決定方向並吸附
-if (isEdgePort(def.id)) {
-  // 點在左側外圈就直放；點在底邊外圈就橫放
-  // 其他位置就依靠近哪邊決定（可改成直接 return 拒絕）
-  const distToLeft = gx;
-  const distToBottom = (GRID_H - 1) - gy;
+  // 先準備要放置的 w/h/rot（不要去改 def 物件本身）
+  let w = def.w;
+  let h = def.h;
+  let rot = 0;
 
-  if (gx === 0 || distToLeft <= distToBottom) {
-    // 左邊直放 1x3
-    gx = 0;
-    gy = Math.max(0, Math.min(gy - 1, GRID_H - 3));
-    def = { ...def, w: 1, h: 3 };
-  } else {
-    // 底邊橫放 3x1
-    gy = GRID_H - 1;
-    gx = Math.max(0, Math.min(gx - 1, GRID_W - 3));
-    def = { ...def, w: 3, h: 1 };
+  // ✅ 邊緣端口：點格子放置時自動決定方向並吸附
+  if (isEdgePort(def.id)) {
+    const distToLeft = gx;
+    const distToBottom = (GRID_H - 1) - gy;
+
+    // 我建議：只有點在「左邊外圈」或「底邊外圈」才允許放
+    // 你若想要「點中間也自動吸附」，把這段 if 註解掉即可
+    if (gx !== 0 && gy !== (GRID_H - 1)) return;
+
+    if (gx === 0) {
+      // 左邊：直放 1x3
+      w = 1; h = 3; rot = 0;
+      gx = 0;
+      gy = Math.max(0, Math.min(gy - 1, GRID_H - 3));
+    } else {
+      // 底邊：橫放 3x1
+      w = 3; h = 1; rot = 90;
+      gy = GRID_H - 1;
+      gx = Math.max(0, Math.min(gx - 1, GRID_W - 3));
+    }
   }
+
+  if (!canPlaceMachine(def.id, gx, gy, w, h, null)) return;
+
+  const id = "M" + (nextMachineId++);
+  const m = {
+    id,
+    defId: def.id,
+    name: def.name,
+
+    // ⭐ 端口的 base 永遠保留原始尺寸（很重要）
+    baseW: def.w,
+    baseH: def.h,
+
+    gx, gy,
+    w, h,
+    rot,
+
+    connected: false,
+    hasAnyConnection: false,
+    connectedPortKeys: {}
+  };
+
+  machines[id] = m;
+  occupyCells(m);
+  updateMachineConnections(m);
 }
-
-    const baseW = def.w;
-    const baseH = def.h;
-    const w = baseW;
-    const h = baseH;
-    if (!canPlaceMachine(def.id, gx, gy, w, h, null)) return;
-
-    const id = "M" + (nextMachineId++);
-    const m = {
-      id,
-      defId: def.id,
-      name: def.name,
-      baseW, baseH,
-      gx, gy,
-      w, h,
-      rot: 0,
-      connected: false,
-      hasAnyConnection: false,
-      connectedPortKeys: {}
-    };
-    machines[id] = m;
-    occupyCells(m);
-    updateMachineConnections(m);
-  }
 
   function strongArrow(ch) {
     switch (ch) {
@@ -1196,6 +1205,7 @@ if (canPlaceMachine(m.defId, cell.gx, cell.gy, m.w, m.h, m.id)) {
 </script>
 </body>
 </html>
+
 
 
 
