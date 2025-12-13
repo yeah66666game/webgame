@@ -285,8 +285,12 @@
   }
 
   const MACHINE_DEFS = [
-    { id:"pickup_port",  name:"取貨口", w:1, h:3 },
-    { id:"store_port",   name:"存貨口", w:1, h:3 },
+  const MACHINE_DEFS = [
+  // ✅ 新增：邊緣端口（取貨口 / 存貨口）
+    { id:"pickup_port", name:"取貨口", w:1, h:3 },
+    { id:"store_port",  name:"存貨口", w:1, h:3 },
+
+  // 原本機器
     { id:"refiner",   name:"精煉機",       w:3, h:3 },
     { id:"crusher",   name:"粉碎機",       w:3, h:3 },
     { id:"assembler", name:"配件機",       w:3, h:3 },
@@ -298,7 +302,11 @@
     { id:"pack",      name:"封裝機",       w:4, h:6 },
     { id:"grind",     name:"研磨機",       w:4, h:6 },
     { id:"protocol",  name:"協議核心",     w:9, h:9 },
+
+  // 這個是你原本的協議儲倉口（保留，不影響）
     { id:"port",      name:"協議儲倉口",   w:3, h:3 }
+];
+
   ];
 
   // grid[y][x] = { beltType, machineId, netId }
@@ -1114,5 +1122,6 @@ if (m.defId === "pickup_port" || m.defId === "store_port") {
 </script>
 </body>
 </html>
+
 
 
