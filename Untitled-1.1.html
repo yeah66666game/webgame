@@ -474,6 +474,35 @@
     }
     return true;
   }
+  function isEdgePort(defId) {
+  return defId === "pickup_port" || defId === "store_port";
+}
+
+// 端口只能放：
+// - 左邊最外圈（x=0）：直放 1x3
+// - 下方最外圈（y=GRID_H-1）：橫放 3x1
+function edgePortAllowed(defId, gx, gy, w, h) {
+  if (!isEdgePort(defId)) return true; // ✅ 非端口完全不限制
+
+  // 左側外圈（直放）
+  if (w === 1 && h === 3) {
+    return gx === 0 && gy >= 0 && (gy + h) <= GRID_H;
+  }
+
+  // 下方外圈（橫放）
+  if (w === 3 && h === 1) {
+    return gy === (GRID_H - 1) && gx >= 0 && (gx + w) <= GRID_W;
+  }
+
+  return false;
+}
+
+function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
+  if (!edgePortAllowed(defId, gx, gy, w, h)) return false;
+  return canPlaceRect(gx, gy, w, h, ignoreId);
+}
+
+  
 
   function occupyCells(m) {
     for (let yy=m.gy; yy<m.gy+m.h; yy++) {
@@ -507,7 +536,7 @@
     const baseH = def.h;
     const w = baseW;
     const h = baseH;
-    if (!canPlaceRect(gx, gy, w, h, null)) return;
+    if (!canPlaceMachine(def.id, gx, gy, w, h, null)) return;
 
     const id = "M" + (nextMachineId++);
     const m = {
@@ -666,6 +695,33 @@
     if (m.defId === "protocol") {
       return getProtocolIO(m);
     }
+  // 邊緣端口：只有中心 1 口，且朝地圖內側接輸送帶
+  if (m.defId === "pickup_port" || m.defId === "store_port") {
+    const kind = (m.defId === "pickup_port") ? "out" : "in";
+
+    // 直放 1x3（左邊外圈）：口在右側中心格，管線接在右邊那格
+    if (m.w === 1 && m.h === 3) {
+      const side = "right";
+      const cellX = m.gx;       // 只有一欄
+      const cellY = m.gy + 1;   // 中間那格
+      // 入口箭頭朝內（右側入口是 ←），出口箭頭朝外（→）
+      const arrow = (kind === "in") ? "←" : "→";
+      return [{ cellX, cellY, side, kind, arrow }];
+    }
+
+    // 橫放 3x1（下方外圈）：口在上側中心格，管線接在上面那格
+    if (m.w === 3 && m.h === 1) {
+      const side = "top";
+      const cellX = m.gx + 1;   // 中間那格
+      const cellY = m.gy;       // 只有一列
+      // 入口箭頭朝內（上側入口是 ↓），出口箭頭朝外（↑）
+      const arrow = (kind === "in") ? "↓" : "↑";
+      return [{ cellX, cellY, side, kind, arrow }];
+    }
+
+    // 如果不是 1x3 或 3x1（理論上不會發生），就先不給口
+    return [];
+  }
 
     const res = [];
     const w = m.w;
@@ -908,7 +964,8 @@
       newH = m.baseW;
     }
 
-    if (!canPlaceRect(m.gx, m.gy, newW, newH, m.id)) return;
+    if (!canPlaceMachine(m.defId, m.gx, m.gy, newW, newH, m.id)) return;
+
 
     clearCells(m);
     m.rot = newRot;
@@ -1010,7 +1067,7 @@
 
     clearCells(m);
 
-    if (cell && canPlaceRect(cell.gx, cell.gy, m.w, m.h, m.id)) {
+    if (cell && canPlaceMachine(m.defId, cell.gx, cell.gy, m.w, m.h, m.id)) {
       m.gx = cell.gx;
       m.gy = cell.gy;
       occupyCells(m);
@@ -1047,4 +1104,5 @@
 </script>
 </body>
 </html>
+
 
