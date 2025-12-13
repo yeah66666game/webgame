@@ -285,12 +285,6 @@
   }
 
   const MACHINE_DEFS = [
-  const MACHINE_DEFS = [
-  // ✅ 新增：邊緣端口（取貨口 / 存貨口）
-    { id:"pickup_port", name:"取貨口", w:1, h:3 },
-    { id:"store_port",  name:"存貨口", w:1, h:3 },
-
-  // 原本機器
     { id:"refiner",   name:"精煉機",       w:3, h:3 },
     { id:"crusher",   name:"粉碎機",       w:3, h:3 },
     { id:"assembler", name:"配件機",       w:3, h:3 },
@@ -302,11 +296,7 @@
     { id:"pack",      name:"封裝機",       w:4, h:6 },
     { id:"grind",     name:"研磨機",       w:4, h:6 },
     { id:"protocol",  name:"協議核心",     w:9, h:9 },
-
-  // 這個是你原本的協議儲倉口（保留，不影響）
     { id:"port",      name:"協議儲倉口",   w:3, h:3 }
-];
-
   ];
 
   // grid[y][x] = { beltType, machineId, netId }
@@ -473,34 +463,6 @@
   }
 
   function canPlaceRect(gx, gy, w, h, ignoreId) {
-    function isEdgePort(defId) {
-  return defId === "pickup_port" || defId === "store_port";
-}
-
-// 只允許：
-// - 左側外圈：直放 1x3 且 gx === 0
-// - 下方外圈：橫放 3x1 且 gy === GRID_H - 1
-function edgePortAllowed(defId, gx, gy, w, h) {
-  if (!isEdgePort(defId)) return true;
-
-  // 直放（左側外圈）
-  if (w === 1 && h === 3) {
-    return gx === 0 && gy >= 0 && (gy + h) <= GRID_H;
-  }
-
-  // 橫放（下方外圈）
-  if (w === 3 && h === 1) {
-    return gy === (GRID_H - 1) && gx >= 0 && (gx + w) <= GRID_W;
-  }
-
-  return false;
-}
-
-// 統一用這個取代原本單純的 canPlaceRect
-function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
-  if (!edgePortAllowed(defId, gx, gy, w, h)) return false;
-  return canPlaceRect(gx, gy, w, h, ignoreId);
-}
     if (gx < 0 || gy < 0 || gx + w > GRID_W || gy + h > GRID_H) return false;
     for (let yy=gy; yy<gy+h; yy++) {
       for (let xx=gx; xx<gx+w; xx++) {
@@ -543,7 +505,7 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
     const baseH = def.h;
     const w = baseW;
     const h = baseH;
-    if (!canPlaceMachine(def.id, gx, gy, w, h, null)) return;
+    if (!canPlaceRect(gx, gy, w, h, null)) return;
 
     const id = "M" + (nextMachineId++);
     const m = {
@@ -617,45 +579,6 @@ function canPlaceMachine(defId, gx, gy, w, h, ignoreId) {
     inner.appendChild(nameCell);
 
     const io = getIOForMachine(m); // 每個 I/O: {cellX, cellY, arrow, side, kind}
-    // 邊緣端口：只有中心一口，且永遠朝「地圖內側」接管線
-if (m.defId === "pickup_port" || m.defId === "store_port") {
-  const isPickup = (m.defId === "pickup_port");
-  const kind = isPickup ? "out" : "in";
-  const res = [];
-
-  // 直放 1x3（左側外圈）：I/O 在「右側」中心格
-  if (m.w === 1 && m.h === 3) {
-    const cellX = m.gx;         // width=1 只有這列
-    const cellY = m.gy + 1;     // 中間那格
-    res.push({
-      cellX, cellY,
-      side: "right",            // 朝內側（右）連管
-      kind,
-      arrow: kind === "in" ? "←" : "→"  // 先給占位，下面會被你既有規則覆蓋也可
-    });
-    // ⚠️ arrow 這裡只是占位。你下面 render 時會用 arrow 字元。
-    // 但你的系統 arrow 是依 side+kind 決定，所以我們直接算對：
-    res[0].arrow = (kind === "in") ? "←" : "→";
-    // 注意：你之前規則是「入口箭頭朝內」，在 right side 的入口應是 "←"（朝內）
-    // right side 的出口應是 "→"（朝外）。這裡符合。
-    return res;
-  }
-
-  // 橫放 3x1（下方外圈）：I/O 在「上側」中心格
-  if (m.w === 3 && m.h === 1) {
-    const cellX = m.gx + 1;     // 中間那格
-    const cellY = m.gy;         // height=1 只有這列
-    res.push({
-      cellX, cellY,
-      side: "top",              // 朝內側（上）連管
-      kind,
-      arrow: (kind === "in") ? "↓" : "↑"
-    });
-    return res;
-  }
-
-  return res;
-}
     for (const p of io) {
       const d = document.createElement("div");
       d.className = "arrow-cell";
@@ -983,7 +906,7 @@ if (m.defId === "pickup_port" || m.defId === "store_port") {
       newH = m.baseW;
     }
 
-    if (!canPlaceMachine(m.defId, m.gx, m.gy, newW, newH, m.id)) return; //這會讓「端口旋轉」時，如果旋轉後不符合左/下外圈規則，就直接禁止旋轉（不會亂跑位）。
+    if (!canPlaceRect(m.gx, m.gy, newW, newH, m.id)) return;
 
     clearCells(m);
     m.rot = newRot;
@@ -1085,7 +1008,7 @@ if (m.defId === "pickup_port" || m.defId === "store_port") {
 
     clearCells(m);
 
-    if (cell && canPlaceMachine(m.defId, cell.gx, cell.gy, m.w, m.h, m.id)) { //這樣拖曳端口也只會吸附在合法外圈位置。
+    if (cell && canPlaceRect(cell.gx, cell.gy, m.w, m.h, m.id)) {
       m.gx = cell.gx;
       m.gy = cell.gy;
       occupyCells(m);
@@ -1122,6 +1045,3 @@ if (m.defId === "pickup_port" || m.defId === "store_port") {
 </script>
 </body>
 </html>
-
-
-
